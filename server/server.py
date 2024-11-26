@@ -1,3 +1,4 @@
+from pyngrok import ngrok
 from flask import Flask, request, jsonify, send_file
 import logging
 from dotenv import load_dotenv
@@ -217,5 +218,8 @@ def delete_document():
     return jsonify({"count": result.delete_count})
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0")
+public_url = ngrok.connect(5000)
+print(f" * Tunnel URL: {public_url}")
+
+if __name__ == '__main__':
+    app.run(port=5000)
