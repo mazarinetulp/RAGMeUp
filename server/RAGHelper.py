@@ -431,11 +431,13 @@ class RAGHelper:
                     )
                 elif self.rerank_model == "sentencebert":
                     self.logger.info("Setting up Sentence-BERT Reranker.")
-                    # Load the Sentence-BERT model
+                    
+                    # Load Sentence-BERT model
                     self.sentence_bert_model = SentenceTransformer(
                         os.getenv("sentencebert_model", "sentence-transformers/msmarco-distilbert-base-tas-b")
                     )
                     
+                    # Define the rerank function
                     def sentence_bert_rerank(query, documents):
                         """
                         Rerank documents based on Sentence-BERT similarity to the query.
@@ -451,9 +453,16 @@ class RAGHelper:
                         # Sort documents by score in descending order
                         ranked_docs = sorted(zip(documents, scores.tolist()), key=lambda x: x[1], reverse=True)
                         return [doc[0] for doc in ranked_docs]
-
-                    self.rerank_function = sentence_bert_rerank  # Attach rerank function to the class.
+                    
+                    # Wrap Sentence-BERT rerank in a ContextualCompressionRetriever
+                    self.logger.info("Creating ContextualCompressionRetriever for Sentence-BERT.")
+                    self.compressor = lambda query, docs: sentence_bert_rerank(query, [doc.page_content for doc in docs])
+                    self.rerank_retriever = ContextualCompressionRetriever(
+                        base_compressor=self.compressor,
+                        base_retriever=self.ensemble_retriever
+                    )
                     self.logger.info("Sentence-BERT Reranker initialized successfully.")
+
                 else:
                     self.logger.info("Setting up the ScoredCrossEncoderReranker.")
                     self.compressor = ScoredCrossEncoderReranker(
