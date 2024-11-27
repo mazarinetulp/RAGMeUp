@@ -22,7 +22,7 @@ class ScoredSBERTReRanker(BaseDocumentCompressor):
         arbitrary_types_allowed = True
         extra = "forbid"
 
-    def _init_(self, model_name: str, top_n: int = 3):
+    def __init__(self, model_name: str, top_n: int = 3):
         self.model = SentenceTransformer(model_name)
         self.top_n = top_n
 
