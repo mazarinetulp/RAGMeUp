@@ -429,6 +429,15 @@ class RAGHelper:
                     self.rerank_retriever = ContextualCompressionRetriever(
                         base_compressor=self.compressor, base_retriever=self.ensemble_retriever
                     )
+                elif self.rerank_model == "ance":
+                    self.logger.info("Setting up ANCE Reranker.")
+                    self.compressor = HuggingFaceCrossEncoder(
+                            model_name=os.getenv("ance_model", "castorini/ance-msmarco")
+                        )
+                    self.logger.info("Setting up the ContextualCompressionRetriever.")
+                    self.rerank_retriever = ContextualCompressionRetriever(
+                            base_compressor=self.compressor, base_retriever=self.ensemble_retriever
+                        )
                 elif self.rerank_model == "sentencebert":
                     self.logger.info("Setting up Sentence-BERT Reranker.")
                     
