@@ -433,45 +433,54 @@ class RAGHelper:
                         base_compressor=self.compressor, base_retriever=self.ensemble_retriever
                     )
                 elif self.rerank_model == "colbert":
-                    self.logger.info("Setting up ColBERT Reranker.")
-                    
-                    from colbert.infra import ColBERT, Run
-                    from colbert.data.collection import Collection
-                    
-                    # Load ColBERT model
-                    self.colbert_model_path = os.getenv("colbert_model_path", "bert-base-uncased")
-                    self.colbert_model = ColBERT.from_pretrained(self.colbert_model_path)
-                    
+                    self.logger.info("Setting up ColBERT Reranker with FLMRModelForRetrieval.")
+
+                    # Import the necessary components
+                    from flmr import FLMRModelForRetrieval, FLMRQueryEncoderTokenizer, FLMRContextEncoderTokenizer
+
+                    # Load the model and tokenizers
+                    checkpoint_path = os.getenv("colbert_model_path", "LinWeizheDragon/ColBERT-v2")
+                    query_tokenizer = FLMRQueryEncoderTokenizer.from_pretrained(checkpoint_path, subfolder="query_tokenizer")
+                    context_tokenizer = FLMRContextEncoderTokenizer.from_pretrained(checkpoint_path, subfolder="context_tokenizer")
+                    self.colbert_model = FLMRModelForRetrieval.from_pretrained(
+                        checkpoint_path,
+                        query_tokenizer=query_tokenizer,
+                        context_tokenizer=context_tokenizer,
+                    )
+
                     def colbert_rerank(query, documents):
                         """
                         Rerank documents based on ColBERT similarity to the query.
-                        
+
                         Args:
                             query (str): The user query.
                             documents (list): List of documents (str).
-                        
+
                         Returns:
                             list: Documents sorted by relevance.
                         """
-                        # Tokenize and encode query and documents
-                        query_embedding = self.colbert_model.query(query)
-                        doc_embeddings = [self.colbert_model.doc(doc.page_content) for doc in documents]
-                        
-                        # Score documents using ColBERT's scoring function
-                        scores = [self.colbert_model.score(query_embedding, doc_emb) for doc_emb in doc_embeddings]
-                        
-                        # Combine documents with scores and sort by descending score
+                        query_encoding = self.colbert_model.encode_query(query_tokenizer(query, return_tensors="pt"))
+                        doc_encodings = [
+                            self.colbert_model.encode_context(context_tokenizer(doc.page_content, return_tensors="pt"))
+                            for doc in documents
+                        ]
+
+                        # Compute scores and sort documents
+                        scores = [
+                            self.colbert_model.score(query_encoding, doc_encoding).item()
+                            for doc_encoding in doc_encodings
+                        ]
                         ranked_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
                         return [doc for doc, _ in ranked_docs]
 
-                    # Wrap ColBERT rerank in a ContextualCompressionRetriever-compatible class
+                    # Create a wrapper compatible with ContextualCompressionRetriever
                     class ColBERTCompressor:
                         def __init__(self, rerank_func):
                             self.rerank_func = rerank_func
-                        
+
                         def compress(self, query, documents):
                             return self.rerank_func(query, documents)
-                    
+
                     self.logger.info("Creating ContextualCompressionRetriever for ColBERT.")
                     self.compressor = ColBERTCompressor(colbert_rerank)
                     self.rerank_retriever = ContextualCompressionRetriever(
@@ -479,7 +488,7 @@ class RAGHelper:
                         base_retriever=self.ensemble_retriever
                     )
                     self.logger.info("ColBERT Reranker initialized successfully.")
-
+                    
                 else:
                     self.logger.info("Setting up the ScoredCrossEncoderReranker.")
                     self.compressor = ScoredCrossEncoderReranker(
