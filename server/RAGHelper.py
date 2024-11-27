@@ -3,6 +3,9 @@ import os
 import pickle
 from sentence_transformers import SentenceTransformer, util
 
+from colbert.infra import ColBERT
+from colbert.data.collection import Collection
+from colbert.infra.run import Run
 
 from langchain.retrievers import (ContextualCompressionRetriever,
                                   EnsembleRetriever)
@@ -429,48 +432,53 @@ class RAGHelper:
                     self.rerank_retriever = ContextualCompressionRetriever(
                         base_compressor=self.compressor, base_retriever=self.ensemble_retriever
                     )
-                elif self.rerank_model == "ance":
-                    self.logger.info("Setting up ANCE Reranker.")
-                    self.compressor = HuggingFaceCrossEncoder(
-                            model_name=os.getenv("ance_model", "castorini/ance-msmarco")
-                        )
-                    self.logger.info("Setting up the ContextualCompressionRetriever.")
-                    self.rerank_retriever = ContextualCompressionRetriever(
-                            base_compressor=self.compressor, base_retriever=self.ensemble_retriever
-                        )
-                elif self.rerank_model == "sentencebert":
-                    self.logger.info("Setting up Sentence-BERT Reranker.")
+                elif self.rerank_model == "colbert":
+                    self.logger.info("Setting up ColBERT Reranker.")
                     
-                    # Load Sentence-BERT model
-                    self.sentence_bert_model = SentenceTransformer(
-                        os.getenv("sentencebert_model", "sentence-transformers/msmarco-distilbert-base-tas-b")
-                    )
+                    from colbert.infra import ColBERT, Run
+                    from colbert.data.collection import Collection
                     
-                    # Define the rerank function
-                    def sentence_bert_rerank(query, documents):
+                    # Load ColBERT model
+                    self.colbert_model_path = os.getenv("colbert_model_path", "bert-base-uncased")
+                    self.colbert_model = ColBERT.from_pretrained(self.colbert_model_path)
+                    
+                    def colbert_rerank(query, documents):
                         """
-                        Rerank documents based on Sentence-BERT similarity to the query.
+                        Rerank documents based on ColBERT similarity to the query.
+                        
                         Args:
                             query (str): The user query.
                             documents (list): List of documents (str).
+                        
                         Returns:
                             list: Documents sorted by relevance.
                         """
-                        query_embedding = self.sentence_bert_model.encode(query, convert_to_tensor=True)
-                        document_embeddings = self.sentence_bert_model.encode(documents, convert_to_tensor=True)
-                        scores = util.pytorch_cos_sim(query_embedding, document_embeddings).squeeze(0)
-                        # Sort documents by score in descending order
-                        ranked_docs = sorted(zip(documents, scores.tolist()), key=lambda x: x[1], reverse=True)
-                        return [doc[0] for doc in ranked_docs]
+                        # Tokenize and encode query and documents
+                        query_embedding = self.colbert_model.query(query)
+                        doc_embeddings = [self.colbert_model.doc(doc.page_content) for doc in documents]
+                        
+                        # Score documents using ColBERT's scoring function
+                        scores = [self.colbert_model.score(query_embedding, doc_emb) for doc_emb in doc_embeddings]
+                        
+                        # Combine documents with scores and sort by descending score
+                        ranked_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
+                        return [doc for doc, _ in ranked_docs]
+
+                    # Wrap ColBERT rerank in a ContextualCompressionRetriever-compatible class
+                    class ColBERTCompressor:
+                        def __init__(self, rerank_func):
+                            self.rerank_func = rerank_func
+                        
+                        def compress(self, query, documents):
+                            return self.rerank_func(query, documents)
                     
-                    # Wrap Sentence-BERT rerank in a ContextualCompressionRetriever
-                    self.logger.info("Creating ContextualCompressionRetriever for Sentence-BERT.")
-                    self.compressor = lambda query, docs: sentence_bert_rerank(query, [doc.page_content for doc in docs])
+                    self.logger.info("Creating ContextualCompressionRetriever for ColBERT.")
+                    self.compressor = ColBERTCompressor(colbert_rerank)
                     self.rerank_retriever = ContextualCompressionRetriever(
                         base_compressor=self.compressor,
                         base_retriever=self.ensemble_retriever
                     )
-                    self.logger.info("Sentence-BERT Reranker initialized successfully.")
+                    self.logger.info("ColBERT Reranker initialized successfully.")
 
                 else:
                     self.logger.info("Setting up the ScoredCrossEncoderReranker.")
