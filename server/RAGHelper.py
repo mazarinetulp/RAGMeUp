@@ -3,10 +3,6 @@ import os
 import pickle
 from sentence_transformers import SentenceTransformer, util
 
-from colbert.data import Queries
-from colbert.infra import Run, RunConfig, ColBERTConfig
-from colbert import Searcher
-
 from langchain.retrievers import (ContextualCompressionRetriever,
                                   EnsembleRetriever)
 from langchain.retrievers.document_compressors import FlashrankRerank
