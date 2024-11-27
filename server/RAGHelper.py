@@ -1,6 +1,8 @@
 import hashlib
 import os
 import pickle
+from sentence_transformers import SentenceTransformer, util
+
 
 from langchain.retrievers import (ContextualCompressionRetriever,
                                   EnsembleRetriever)
@@ -418,20 +420,53 @@ class RAGHelper:
                 "environment variables.")
 
     def _initialize_reranker(self):
-        """Initialize the reranking model based on environment settings."""
-        if self.rerank_model == "flashrank":
-            self.logger.info("Setting up the FlashrankRerank.")
-            self.compressor = FlashrankRerank(top_n=self.rerank_k)
-        else:
-            self.logger.info("Setting up the ScoredCrossEncoderReranker.")
-            self.compressor = ScoredCrossEncoderReranker(
-                model=HuggingFaceCrossEncoder(model_name=self.rerank_model),
-                top_n=self.rerank_k
-            )
-        self.logger.info("Setting up the ContextualCompressionRetriever.")
-        self.rerank_retriever = ContextualCompressionRetriever(
-            base_compressor=self.compressor, base_retriever=self.ensemble_retriever
-        )
+            """Initialize the reranking model based on environment settings."""
+            try:
+                if self.rerank_model == "flashrank":
+                    self.logger.info("Setting up the FlashrankRerank.")
+                    self.compressor = FlashrankRerank(top_n=self.rerank_k)
+                    self.logger.info("Setting up the ContextualCompressionRetriever.")
+                    self.rerank_retriever = ContextualCompressionRetriever(
+                        base_compressor=self.compressor, base_retriever=self.ensemble_retriever
+                    )
+                elif self.rerank_model == "sentencebert":
+                    self.logger.info("Setting up Sentence-BERT Reranker.")
+                    # Load the Sentence-BERT model
+                    self.sentence_bert_model = SentenceTransformer(
+                        os.getenv("sentencebert_model", "sentence-transformers/msmarco-distilbert-base-tas-b")
+                    )
+                    
+                    def sentence_bert_rerank(query, documents):
+                        """
+                        Rerank documents based on Sentence-BERT similarity to the query.
+                        Args:
+                            query (str): The user query.
+                            documents (list): List of documents (str).
+                        Returns:
+                            list: Documents sorted by relevance.
+                        """
+                        query_embedding = self.sentence_bert_model.encode(query, convert_to_tensor=True)
+                        document_embeddings = self.sentence_bert_model.encode(documents, convert_to_tensor=True)
+                        scores = util.pytorch_cos_sim(query_embedding, document_embeddings).squeeze(0)
+                        # Sort documents by score in descending order
+                        ranked_docs = sorted(zip(documents, scores.tolist()), key=lambda x: x[1], reverse=True)
+                        return [doc[0] for doc in ranked_docs]
+
+                    self.rerank_function = sentence_bert_rerank  # Attach rerank function to the class.
+                    self.logger.info("Sentence-BERT Reranker initialized successfully.")
+                else:
+                    self.logger.info("Setting up the ScoredCrossEncoderReranker.")
+                    self.compressor = ScoredCrossEncoderReranker(
+                        model=HuggingFaceCrossEncoder(model_name=self.rerank_model),
+                        top_n=self.rerank_k
+                    )
+                    self.logger.info("Setting up the ContextualCompressionRetriever.")
+                    self.rerank_retriever = ContextualCompressionRetriever(
+                        base_compressor=self.compressor, base_retriever=self.ensemble_retriever
+                    )
+            except Exception as e:
+                self.logger.error(f"Failed to initialize reranker: {e}")
+                raise e
 
     def _setup_retrievers(self):
         """Sets up the retrievers based on specified configurations."""
