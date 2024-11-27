@@ -25,7 +25,7 @@ from langchain_postgres.vectorstores import PGVector
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from lxml import etree
 from PostgresBM25Retriever import PostgresBM25Retriever
-from ScoredCrossEncoderReranker import ScoredCrossEncoderReranker
+from ScoredCrossEncoderReranker import ScoredCrossEncoderReranker, ScoredSBERTReRanker
 from tqdm import tqdm
 
 
@@ -432,53 +432,15 @@ class RAGHelper:
                     self.rerank_retriever = ContextualCompressionRetriever(
                         base_compressor=self.compressor, base_retriever=self.ensemble_retriever
                     )
-                elif self.rerank_model == "colbert":
-                    self.logger.info("Setting up ColBERT Reranker.")
-                    
-                    from colbert.infra import ColBERT, Run
-                    from colbert.data.collection import Collection
-                    
-                    # Load ColBERT model
-                    self.colbert_model_path = os.getenv("colbert_model_path", "bert-base-uncased")
-                    self.colbert_model = ColBERT.from_pretrained(self.colbert_model_path)
-                    
-                    def colbert_rerank(query, documents):
-                        """
-                        Rerank documents based on ColBERT similarity to the query.
-                        
-                        Args:
-                            query (str): The user query.
-                            documents (list): List of documents (str).
-                        
-                        Returns:
-                            list: Documents sorted by relevance.
-                        """
-                        # Tokenize and encode query and documents
-                        query_embedding = self.colbert_model.query(query)
-                        doc_embeddings = [self.colbert_model.doc(doc.page_content) for doc in documents]
-                        
-                        # Score documents using ColBERT's scoring function
-                        scores = [self.colbert_model.score(query_embedding, doc_emb) for doc_emb in doc_embeddings]
-                        
-                        # Combine documents with scores and sort by descending score
-                        ranked_docs = sorted(zip(documents, scores), key=lambda x: x[1], reverse=True)
-                        return [doc for doc, _ in ranked_docs]
-
-                    # Wrap ColBERT rerank in a ContextualCompressionRetriever-compatible class
-                    class ColBERTCompressor:
-                        def __init__(self, rerank_func):
-                            self.rerank_func = rerank_func
-                        
-                        def compress(self, query, documents):
-                            return self.rerank_func(query, documents)
-                    
-                    self.logger.info("Creating ContextualCompressionRetriever for ColBERT.")
-                    self.compressor = ColBERTCompressor(colbert_rerank)
+                
+                elif self.rerank_model == "sbert":
+                    self.logger.info("Setting up the ScoredSBERTReRanker.")
+                    self.compressor = ScoredSBERTReRanker(model_name="all-MiniLM-L6-v2", top_n=self.rerank_k)
+                    self.logger.info("Setting up the ContextualCompressionRetriever.")
                     self.rerank_retriever = ContextualCompressionRetriever(
-                        base_compressor=self.compressor,
-                        base_retriever=self.ensemble_retriever
+                        base_compressor=self.compressor, base_retriever=self.ensemble_retriever
                     )
-                    self.logger.info("ColBERT Reranker initialized successfully.")
+                
 
                 else:
                     self.logger.info("Setting up the ScoredCrossEncoderReranker.")
